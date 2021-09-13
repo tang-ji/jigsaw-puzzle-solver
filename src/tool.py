@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
 from matplotlib import pyplot as plt
-
+from scipy.spatial import distance as dist
 
 def show(imgs):
     n = len(imgs)
@@ -31,16 +31,16 @@ def white_balance(img):
     result = cv2.cvtColor(result, cv2.COLOR_LAB2BGR)
     return result
 
-def clockwise_corners(corners):
-    corners_ordered = sorted(corners, key=lambda x: x[0]+x[1])
-    ret = []
-    ret.append(corners_ordered[0])
-    corners_ordered = sorted(corners_ordered[1:], key=lambda x: x[1])
-    ret.append(corners_ordered[0])
-    corners_ordered = sorted(corners_ordered[1:], key=lambda x: -x[0]-x[1])
-    ret.append(corners_ordered[0])
-    ret.append(corners_ordered[1])
-    return ret
+def clockwise_corners(pts):
+    pts = np.array(pts.copy())
+    xSorted = pts[np.argsort(pts[:, 0]), :]
+    leftMost = xSorted[:2, :]
+    rightMost = xSorted[2:, :]
+    leftMost = leftMost[np.argsort(leftMost[:, 1]), :]
+    (tl, bl) = leftMost
+    D = dist.cdist(tl[np.newaxis], rightMost, "euclidean")[0]
+    (br, tr) = rightMost[np.argsort(D)[::-1], :]
+    return np.array([tl, tr, br, bl])
 
 def warpBox(image,
             box,

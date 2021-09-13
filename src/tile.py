@@ -1,17 +1,7 @@
 import numpy as np
 from matplotlib import pyplot as plt
 import cv2
-from scipy.spatial import distance as dist
-
-def clockwise_corners(pts):
-    xSorted = pts[np.argsort(pts[:, 0]), :]
-    leftMost = xSorted[:2, :]
-    rightMost = xSorted[2:, :]
-    leftMost = leftMost[np.argsort(leftMost[:, 1]), :]
-    (tl, bl) = leftMost
-    D = dist.cdist(tl[np.newaxis], rightMost, "euclidean")[0]
-    (br, tr) = rightMost[np.argsort(D)[::-1], :]
-    return np.array([tl, tr, br, bl])
+from src.tool import clockwise_corners
 
 def rotate_points(pts, l, h):
     a,b,c,d = pts
