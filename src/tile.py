@@ -1,14 +1,17 @@
 import numpy as np
 from matplotlib import pyplot as plt
 import cv2
-from src.tool import clockwise_corners
+from src.tool import *
+from src.piece_process import *
+import scipy.ndimage as ndimage
 
 def rotate_points(pts, l, h):
     ret = []
     for i in range(1, len(pts)):
         p = pts[i]
         ret.append([p[1], l-p[0]])
-    ret.append(pts[0])
+    p = pts[0]
+    ret.append([p[1], l-p[0]])
     return np.array(ret)
 
 
@@ -111,7 +114,9 @@ class Tile:
         self.contour = contour.reshape((contour.shape[0], contour.shape[-1]))
         self.labels = annotate(contour, self.corners)
         self.dd, self.v = label_diff(contour, self.corners, self.labels)
-        self.threshold = threshold   
+        self.threshold = threshold
+        self.n_edges = sum(np.array(self.v) <= self.threshold)
+        self.center = ndimage.center_of_mass(self.mask)
 
     def show(self):
         img = self.img.copy()
@@ -126,7 +131,7 @@ class Tile:
         axs[1].title.set_text('tile mask')
         img = self.img.copy()
         for i in range(4):
-            color = (230,230,230)
+            color = (0,230,0)
             if self.v[i]>self.threshold:
                 color = (230,0,0)
             for c in self.contour[self.labels==i]:
