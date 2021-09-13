@@ -4,8 +4,12 @@ import cv2
 from src.tool import clockwise_corners
 
 def rotate_points(pts, l, h):
-    a,b,c,d = pts
-    return np.array([[b[1], l-b[0]], [c[1], l-c[0]], [d[1], l-d[0]], [a[1], l-a[0]]])
+    ret = []
+    for i in range(1, len(pts)):
+        p = pts[i]
+        ret.append([p[1], l-p[0]])
+    ret.append(pts[0])
+    return np.array(ret)
 
 
 def four_point_transform(image, pts, normalise=False):
@@ -59,35 +63,87 @@ def overlay_image_alpha(img, img_overlay, pos, alpha_mask):
         img[y1:y2, x1:x2, c] = (alpha * img1 + alpha_inv * img2)
     return img
 
-class Tile:
+def check_between(p1, p0, p2, center_tile):
+    return round(get_angle(p1, center_tile, p0)) + round(get_angle(p0, center_tile, p2)) - round(get_angle(p1, center_tile, p2))<=3
 
-    def __init__(self, tile_img, tile_mask, tile_corners):
+def annotate(contour, corners, center_tile=None):
+    labels = []
+    contour = contour.reshape((contour.shape[0], contour.shape[-1]))
+    corners = corners.reshape((corners.shape[0], corners.shape[-1]))
+    if center_tile is None:
+        center_tile = np.mean(corners, axis=0)
+    for p0 in contour:
+        c = 3
+        for i in range(3):
+            p1 = corners[i]
+            p2 = corners[i+1]
+            if check_between(p1, p0, p2, center_tile):
+                c = i
+                break
+        labels.append(c)
+    return np.array(labels)
+
+def dis_point_line(p1, p2, p0):
+    return np.linalg.norm(np.cross(p2-p1, p1-p0))/np.linalg.norm(p2-p1)
+
+def label_diff(contour, corners, labels):
+    dd, v = [], []
+    for label in range(4):
+        l = [corners[0], corners[1], corners[2], corners[3], corners[0]]
+        p1, p2 = l[label], l[label+1]
+        p3 = np.mean(corners, axis=0)
+        d = dis_point_line(p1, p2, p3)
+        p4 = p3 + (p2-p1)/np.linalg.norm(p2-p1)
+        d2 = np.mean([dis_point_line(p3, p4, x) for x in contour[labels==label]], axis=-1)
+        v.append(np.var([dis_point_line(p3, p4, x) for x in contour[labels==label]], axis=-1))
+        dd.append(d2-d)
+    return dd, v
+
+class Tile:
+    def __init__(self, tile_img, tile_mask, tile_corners, threshold=200):
         self.orig_img = tile_img
         self.orig_mask = tile_mask
         self.orig_corners = np.array(clockwise_corners(tile_corners))
         self.img, self.corners = four_point_transform(self.orig_img, self.orig_corners)
         self.mask, _ = four_point_transform(np.float32(self.orig_mask), self.orig_corners)
+        mask = self.mask.astype(np.uint8)
+        contour = get_smooth_contour(mask)
+        self.contour = contour.reshape((contour.shape[0], contour.shape[-1]))
+        self.labels = annotate(contour, self.corners)
+        self.dd, self.v = label_diff(contour, self.corners, self.labels)
+        self.threshold = threshold   
 
     def show(self):
         img = self.img.copy()
         for c in self.corners:
-            img = cv2.circle(img, tuple(c), 8, (255,0,0), thickness=3)
-
-        plt.subplot(121), plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), cmap='gray')
-        plt.title('tile'), plt.xticks([]), plt.yticks([])
-        plt.subplot(122), plt.imshow(self.mask, cmap='gray')
-        plt.title('tile mask'), plt.xticks([]), plt.yticks([])
-        plt.show()
+            img = cv2.circle(img, tuple(c), 8, (230,0,0), thickness=3)
+        f, axs = plt.subplots(1, 3, figsize=(12,18))
+        axs[0].axis('off')
+        axs[0].imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        axs[0].title.set_text('tile')
+        axs[1].imshow(self.mask, cmap='gray')
+        axs[1].axis('off')
+        axs[1].title.set_text('tile mask')
+        img = self.img.copy()
+        for i in range(4):
+            color = (230,230,230)
+            if self.v[i]>self.threshold:
+                color = (230,0,0)
+            for c in self.contour[self.labels==i]:
+                img = cv2.circle(img, tuple(c), 8, color, thickness=5)
+        axs[2].imshow(img)
+        axs[2].axis('off')
+        axs[2].title.set_text('tile contour')
 
     def rotate(self, num=1):
         for i in range(num):
             self.img = np.rot90(self.img)
             self.mask = np.rot90(self.mask)
             self.corners = rotate_points(self.corners, len(self.img), len(self.img[0]))
+            self.contour = np.array([[b[1], len(self.img)-b[0]] for b in self.contour])
     
     def scale(self, scale=1):
         w, h, _ = self.img.shape
         self.img = cv2.resize(self.img, (int(w*scale), int(h*scale)))
         self.mask = cv2.resize(self.mask, (int(w*scale), int(h*scale)))
         self.corners = np.array(self.corners*scale, dtype=int)
-        
