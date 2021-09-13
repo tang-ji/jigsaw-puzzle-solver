@@ -3,14 +3,14 @@ import cv2
 from matplotlib import pyplot as plt
 from scipy.spatial import distance as dist
 
-def show(imgs):
+def show(imgs, h=8):
     n = len(imgs)
     if n == 1:
-        plt.figure(figsize=(8, 6), dpi=80)
+        plt.figure(figsize=(h, 6), dpi=80)
         plt.axis("off")
         plt.imshow(cv2.cvtColor(imgs[0], cv2.COLOR_BGR2RGB))
         return
-    f, axs = plt.subplots(1, n,figsize=(8,6*n))
+    f, axs = plt.subplots(1, n,figsize=(h,6*n))
     for i in range(n):
         axs[i].axis('off')
         axs[i].imshow(cv2.cvtColor(imgs[i], cv2.COLOR_BGR2RGB))
@@ -18,7 +18,7 @@ def show(imgs):
 def annotate_points(img, points):
     mask_temp = img.copy()
     for c in points:
-        c = c.flatten().astype(int)
+        c = np.array(c).flatten().astype(int)
         mask_temp = cv2.circle(mask_temp, tuple(c), 8, (0,255,0), thickness=3)
     show([mask_temp])
     
