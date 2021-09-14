@@ -5,7 +5,7 @@ import numpy as np
 import scipy.ndimage as ndimage
 from src.tool import white_balance, warpBox
 
-def get_tile_corners(mask):
+def get_background_corners(mask):
     canny = cv2.Canny(mask, 100, 255, 1)
     corners = cv2.goodFeaturesToTrack(canny, 30, 0.1, 100)
     corners = [tuple(corner.flatten()) for corner in corners]
@@ -49,7 +49,7 @@ def get_warp_image(img, margin=9):
     mask = np.zeros(list(map(operator.add, edges.shape, (margin*2,margin*2,0))), dtype = np.uint8)
     for contour in contour_info:
         mask = cv2.fillConvexPoly(mask, contour[0]+margin, (255))
-    corners = get_tile_corners(mask)
+    corners = get_background_corners(mask)
     corners = [tuple((corner-margin)/scale) for corner in corners]
     
     return warpBox(img,corners)
@@ -144,23 +144,33 @@ def pieces_searching(img_overlap):
         output[:, :, 2][m] = np.random.randint(0, 255)
     return pieces, output
 
+# def crop_piece(piece, img_balanced, margin=10):
+#     piece = piece.copy().astype(np.uint8)
+#     piece[piece==True]=255
+#     piece[piece==False]=0
+#     contour_info = [(c, cv2.contourArea(c),) for c in cv2.findContours(piece, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)[0]]
+#     image_area = piece.shape[0] * piece.shape[1]  
+#     min_area = 0.0001 * image_area
+#     points = np.array([])
+#     for contour in contour_info:
+#         if contour[1] > min_area:
+#             points = contour[0].reshape(contour[0].shape[0], contour[0].shape[2])
+#     minX = max(min(points[:, 1])-margin, 0)
+#     maxX = min(max(points[:, 1])+margin, len(piece))
+#     minY= max(min(points[:, 0])-margin, 0)
+#     maxY= min(max(points[:, 0])+margin, len(piece[0]))
+#     return piece[minX:maxX, minY:maxY], img_balanced[minX:maxX, minY:maxY]
+
+# new version
 def crop_piece(piece, img_balanced, margin=10):
-    piece = piece.copy().astype(np.uint8)
-    piece[piece==True]=255
-    piece[piece==False]=0
-    contour_info = [(c, cv2.contourArea(c),) for c in cv2.findContours(piece, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)[0]]
-    image_area = piece.shape[0] * piece.shape[1]  
-    min_area = 0.0001 * image_area
-    points = np.array([])
-    for contour in contour_info:
-        if contour[1] > min_area:
-            points = contour[0].reshape(contour[0].shape[0], contour[0].shape[2])
-    minX = max(min(points[:, 1])-margin, 0)
-    maxX = min(max(points[:, 1])+margin, len(piece))
-    minY= max(min(points[:, 0])-margin, 0)
-    maxY= min(max(points[:, 0])+margin, len(piece[0]))
-#     print(minY,maxY, minX,maxX)
-    return piece[minX:maxX, minY:maxY], img_balanced[minX:maxX, minY:maxY]
+    x_set, y_set = np.where(np.any(piece, axis=1)), np.where(np.any(piece, axis=0))
+    minX = max(np.min(x_set)-margin, 0)
+    maxX = min(np.max(x_set)+margin, len(piece))
+    minY= max(np.min(y_set)-margin, 0)
+    maxY= min(np.max(y_set)+margin, len(piece[0]))
+    piece = piece[minX:maxX, minY:maxY].copy().astype(np.uint8)
+    piece[piece==1]=255
+    return piece, img_balanced[minX:maxX, minY:maxY].copy()
 
 def get_smooth_contour(piece, image_area=None, n_polys=150):
     piece = piece.copy()
@@ -231,56 +241,62 @@ def get_90deg_corners(pt, corners, rule1, rule2, margin = 5):
 def refine_corners(corners, tile_center, angle_diff = 20):
     corners_refined = []
     for c1 in corners:
-        f = False
+        c1 = tuple(c1)
+        f = True
+        remove_l = []
         for c2 in corners_refined:
+            if c2 == c1:
+                f = False
+                break
             if get_angle(c2, tile_center, c1) < angle_diff:
-                if np.sum(np.square(np.array(c1) - np.array(tile_center))) > np.sum(np.square(np.array(c2) - np.array(tile_center))):
-                    corners_refined.remove(tuple(c2))
-                    corners_refined.append(tuple(c1))
-                f = True
-                continue
-        if not f:
+                if get_distance(c1,tile_center) > get_distance(c2,tile_center):
+                    remove_l.append(tuple(c2))
+                else:
+                    f = False
+                    break
+        if f:
             corners_refined.append(tuple(c1))
-    corners_refined = np.array(corners_refined)
+            for r in remove_l:
+                corners_refined.remove(r)
+    corners_refined = np.array(list(corners_refined))
     return corners_refined
 
 def get_tile_corners(mask, angle_margin=15, angle_diff_ls_thres=200):
-    corners = cv2.goodFeaturesToTrack(mask, 80, 0.1, 20)
+    corners = cv2.goodFeaturesToTrack(mask, 80, 0.05, 10)
     corners = corners.reshape(corners.shape[0], corners.shape[-1])
+    tile_center = np.mean(corners, axis=0)
+    corners = refine_corners(corners, tile_center)
 #     tile_center = ndimage.center_of_mass(mask)
 #     tile_center = tuple(np.round(tile_center).astype(np.int))
-    tile_center = np.mean(corners, axis=0)
     ang_opt = np.array([90, 90, 90, 90])
     ang_diff_ls = None
     side_var = None
     tile_corners = []
     ret = []
 
-    corners = refine_corners(corners, tile_center)
-
     for c1 in corners:
-        if c1[1] <= tile_center[1]:
-                candidates1 = get_90deg_corners(c1, corners, lambda c: True, lambda c: True, angle_margin)
-                for c2, c4 in candidates1:
-                    for c3 in corners:
-                        if c3[1] >= tile_center[1]:
-                            candidates2 = get_90deg_corners(c3, corners, lambda c: True, lambda c: True, angle_margin)  # c[0] >= tile_center[0] and c[1] <= tile_center[1])
-                            for t2, t4 in candidates2:
-                                if (((np.array_equal(c2, t2) and np.array_equal(c4, t4)) or
-                                     (np.array_equal(c2, t4) and np.array_equal(c4, t2)))) and 90 - angle_margin < get_angle(c2,c3,c4) < 90 + angle_margin and 90 - angle_margin < get_angle(c3, c4, c1) < 90 + angle_margin:
-                                    new = [c1, c2, c3, c4]
-                                    ang_new = np.array([get_angle(new[i], new[(i + 1) % 4], new[(i + 2) % 4]) for i in range(4)])
-                                    ang_diff_ls_new = np.sum(np.square(ang_opt - ang_new))
-                                    side_var_new = np.var([get_distance(new[(i + 1) % 4], new[i]) for i in range(4)])
-                                    if len(tile_corners) > 0:
-                                        dist_var_new = np.var([get_distance(x, tile_center) for x in new])
-                                        dist_var_curr = np.var([get_distance(tile_corners[i], tile_center) for i in range(4)])
-                                        if ang_diff_ls_new > ang_diff_ls or dist_var_new > dist_var_curr or side_var_new > side_var:
-                                            continue
-                                    elif ang_diff_ls_new > angle_diff_ls_thres:
+        if c1[1] <= tile_center[1]+mask.shape[1] and c1[0] <= tile_center[0]+mask.shape[0]:
+            candidates1 = get_90deg_corners(c1, corners, lambda c: c[1] >= tile_center[1]-mask.shape[1]*0.2, lambda c: c[0] >= tile_center[0]-mask.shape[0]*0.2, angle_margin)
+            for c2, c4 in candidates1:
+                for c3 in corners:
+                    if c3[1] >= tile_center[1]-mask.shape[1]*0.2 and c3[0] >= tile_center[0]-mask.shape[0]*0.2:
+                        candidates2 = get_90deg_corners(c3, corners, lambda c: True, lambda c: True, angle_margin)  # c[0] >= tile_center[0] and c[1] <= tile_center[1])
+                        for t2, t4 in candidates2:
+                            if (((np.array_equal(c2, t2) and np.array_equal(c4, t4)) or
+                                 (np.array_equal(c2, t4) and np.array_equal(c4, t2)))) and 90 - angle_margin < get_angle(c2,c3,c4) < 90 + angle_margin and 90 - angle_margin < get_angle(c3, c4, c1) < 90 + angle_margin:
+                                new = [c1, c2, c3, c4]
+                                ang_new = np.array([get_angle(new[i], new[(i + 1) % 4], new[(i + 2) % 4]) for i in range(4)])
+                                ang_diff_ls_new = np.sum(np.square(ang_opt - ang_new))
+                                side_var_new = np.var([get_distance(new[(i + 1) % 4], new[i]) for i in range(4)])
+                                if len(tile_corners) > 0:
+                                    dist_var_new = np.var([get_distance(x, tile_center) for x in new])
+                                    dist_var_curr = np.var([get_distance(tile_corners[i], tile_center) for i in range(4)])
+                                    if ang_diff_ls_new > ang_diff_ls or dist_var_new > dist_var_curr or side_var_new > side_var:
                                         continue
-                                    ang_diff_ls = ang_diff_ls_new
-                                    side_var = side_var_new
-                                    ret.append(np.array([c1, c2, c3, c4]))
+                                elif ang_diff_ls_new > angle_diff_ls_thres:
+                                    continue
+                                ang_diff_ls = ang_diff_ls_new
+                                side_var = side_var_new
+                                ret.append(np.array([c1, c2, c3, c4]))
     tile_corners = sorted(ret, key=lambda x: -cv2.contourArea(x))[0]
     return tile_corners
