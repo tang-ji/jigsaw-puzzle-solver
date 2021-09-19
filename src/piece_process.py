@@ -99,7 +99,7 @@ def centroid_histogram(clt):
     hist /= hist.sum()
     return hist
 
-def kmeans_color_purifier(mask, img_balanced, n_samples=20000, n_clusters=40, t=0.9, show=True):
+def kmeans_color_purifier(mask, img_balanced, n_samples=20000, n_clusters=40, t=0.95, iterations=3, show=False):
     colors = []
     for _ in range(n_samples):
         i, j = np.random.randint(0, len(mask)), np.random.randint(0, len(mask[0]))
@@ -108,19 +108,19 @@ def kmeans_color_purifier(mask, img_balanced, n_samples=20000, n_clusters=40, t=
 
     c_var = np.var(colors, axis=0)
     
-    clt = KMeans(n_clusters=n_clusters)
-    clt.fit(colors)
-    if show:
-        hist = centroid_histogram(clt)
-        bar = plot_colors(hist, clt.cluster_centers_)
-    
     img_overlap = np.zeros(mask.shape, dtype = "uint8")
-    for c_mean in clt.cluster_centers_:
-        m = cv2.inRange(img_balanced, c_mean-0.2*np.sqrt(c_var), c_mean+0.2*np.sqrt(c_var))
-        v = np.sum((255-m == 0)*(255-mask == 0))/np.sum((255-m == 0))
-        # verify the color not in the puzzle blocks
-        if v > t:
-            img_overlap |= m
+    for _ in range(iterations):
+        clt = KMeans(n_clusters=n_clusters)
+        clt.fit(colors)
+        if show:
+            hist = centroid_histogram(clt)
+            bar = plot_colors(hist, clt.cluster_centers_)
+        for c_mean in clt.cluster_centers_:
+            m = cv2.inRange(img_balanced, c_mean-0.3*np.sqrt(c_var), c_mean+0.3*np.sqrt(c_var))
+            v = np.sum((255-m == 0)*(255-mask == 0))/np.sum((255-m == 0))
+            # verify the color not in the puzzle blocks
+            if v > t:
+                img_overlap |= m
     return img_overlap
 
 # Pieces searching and coloring
